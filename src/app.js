@@ -17,14 +17,18 @@ const Bucket = mongoose.model("Bucket", BucketSchema);
 const Conversation = mongoose.model("Conversation", ConversationSchema);
 
 if(DEBUG) {
-	console.log("debugging enabled");
 	mongoose.set("debug", true);
 }
 
 mongoose.connect("mongodb://" + MESSAGES_MONGO_SERVICE_HOST + ":" + MESSAGES_MONGO_SERVICE_PORT + "/messages").then(db => {
 	api.listen(MESSAGES_REST_SERVICE_PORT);	
-}, error => {
+	
 	api.close();
+	mongoose.disconnect();
+}, error => {
+	console.log(error);
+	
+	process.exit(1);
 });
 
 /* API */
@@ -112,3 +116,24 @@ api.post("/messages", (req, res) => {
 		res.status(500).send(error);
 	});
 });
+
+console.log("messages-rest service started");
+console.log("  PID=%s", process.pid);
+console.log("  DEBUG=%s", DEBUG);
+console.log("  MESSAGES_REST_SERVICE_PORT=%s", MESSAGES_REST_SERVICE_PORT);
+console.log("  MESSAGES_MONGO_SERVICE_HOST=%s", MESSAGES_MONGO_SERVICE_HOST);
+console.log("  MESSAGES_MONGO_SERVICE_PORT=%s", MESSAGES_MONGO_SERVICE_PORT);
+console.log("");
+
+function exitOnSignal(signal) {
+	process.on(signal, function() {
+		console.log("Shutting down.. (%s)", signal);
+		
+		mongoose.disconnect();
+		
+		process.exit(0);
+	});
+}
+
+exitOnSignal("SIGTERM");
+exitOnSignal("SIGINT");

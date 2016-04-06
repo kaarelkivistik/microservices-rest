@@ -8,6 +8,6 @@ RUN npm install -q
 COPY . /usr/src/app
 RUN npm run build
 
-CMD [ "npm", "start" ]
+CMD [ "node", "build/app.js" ]
 
 EXPOSE 80
