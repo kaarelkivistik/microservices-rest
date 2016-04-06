@@ -3,7 +3,11 @@ import { json } from 'body-parser';
 import mongoose, { Schema } from 'mongoose';
 import { MessageSchema, ConversationSchema, BucketSchema } from './schemas';
 
-const { MESSAGES_REST_SERVICE_PORT = 80, MESSAGES_MONGO_SERVICE_HOST = "localhost", MESSAGES_MONGO_SERVICE_PORT = "27017" } = process.env;
+const { 
+	DEBUG,
+	MESSAGES_REST_SERVICE_PORT = "80", 
+	MESSAGES_MONGO_SERVICE_HOST = "localhost", 
+	MESSAGES_MONGO_SERVICE_PORT = "27017" } = process.env;
 
 /* Mongoose/MongoDB */
 
@@ -12,7 +16,10 @@ const BUCKET_SIZE = 5;
 const Bucket = mongoose.model("Bucket", BucketSchema);
 const Conversation = mongoose.model("Conversation", ConversationSchema);
 
-mongoose.set("debug", true);
+if(DEBUG) {
+	console.log("debugging enabled");
+	mongoose.set("debug", true);
+}
 
 mongoose.connect("mongodb://" + MESSAGES_MONGO_SERVICE_HOST + ":" + MESSAGES_MONGO_SERVICE_PORT + "/messages").then(db => {
 	api.listen(MESSAGES_REST_SERVICE_PORT);	
