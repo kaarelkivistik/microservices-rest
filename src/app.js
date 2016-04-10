@@ -52,16 +52,24 @@ api.get("/conversations", (req, res) => {
 api.get("/buckets", (req, res) => {
 	const { a, b, sequence, limit = 1 } = req.query;
 	
-	let dbQuery = {
+	const parsedSequence = parseInt(sequence);
+	const parsedLimit = parseInt(limit);
+	
+	const andConditions = [{
 		$or: [{a: a, b: b}, {a: b, b: a}]
-	};
+	}];
 	
 	if(sequence)
-		dbQuery.sequence = sequence;
-	
-	Bucket.find(dbQuery).sort({
-		sequence: -1
-	}).limit(parseInt(limit)).exec().then(result => {
+		andConditions.push({
+			sequence: {
+				"$gte": parsedSequence,
+				"$lt": parsedSequence + parsedLimit
+			}
+		});
+		
+	Bucket.find({
+		$and: andConditions
+	}).limit(parsedLimit).sort({sequence: -1}).exec().then(result => {
 		res.send(result);
 	}, error => {
 		res.status(500).send(error);
