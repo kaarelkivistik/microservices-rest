@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-messages-config
+spec:
+  selector:
+    name: mongo-messages-config
+  ports:
+  - port: 27019
+---
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: mongo-messages-config
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        name: mongo-messages-config
+    spec:
+      containers:
+      - image: mongo
+        name: mongo
+        args:
+        - mongod
+        - --configsvr
+        ports:
+        - containerPort: 27019
+        volumeMounts:
+            - name: mongo-messages-config-storage
+              mountPath: /data/db
+      volumes:
+        - name: mongo-messages-config-storage
+          gcePersistentDisk:
+            pdName: mongo-messages-config-storage
+            fsType: ext4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-messages
+spec:
+  selector:
+    name: mongo-messages
+  ports:
+  - port: 27017
+---
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: mongo-messages
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        name: mongo-messages
+    spec:
+      containers:
+      - image: mongo
+        name: mongo
+        args:
+        - mongos
+        - --configdb
+        - mongo-messages-config
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-messages-1
+spec:
+  selector:
+    name: mongo-messages-1
+  ports:
+  - port: 27017
+---
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: mongo-messages-1
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        name: mongo-messages-1
+    spec:
+      containers:
+      - image: mongo
+        name: mongo
+        ports:
+        - containerPort: 27017
+        volumeMounts:
+            - name: mongo-messages-1-storage
+              mountPath: /data/db
+      volumes:
+        - name: mongo-messages-1-storage
+          gcePersistentDisk:
+            pdName: mongo-messages-1-storage
+            fsType: ext4
