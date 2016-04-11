@@ -1,7 +1,10 @@
+import { difference } from 'underscore';
+import Promise from 'promise';
 import express from 'express';
 import { json } from 'body-parser';
-import mongoose, { Schema } from 'mongoose';
-import { MessageSchema, ConversationSchema, BucketSchema } from './schemas';
+import { MongoClient, Logger, ObjectID } from 'mongodb';
+// import mongoose, { Schema } from 'mongoose';
+// import { MessageSchema, ConversationSchema, UserSchema, BucketSchema } from './schemas';
 
 const { 
 	DEBUG,
@@ -12,21 +15,66 @@ const {
 /* Mongoose/MongoDB */
 
 const BUCKET_SIZE = 5;
+const DATABASE = "messages";
+const CONNECTION_URL = "mongodb://" + MESSAGES_MONGO_SERVICE_HOST + ":" + MESSAGES_MONGO_SERVICE_PORT + "/" + DATABASE;
 
-const Bucket = mongoose.model("Bucket", BucketSchema);
-const Conversation = mongoose.model("Conversation", ConversationSchema);
+let db, User, Conversation, Bucket;
 
-if(DEBUG) {
-	mongoose.set("debug", true);
-}
-
-mongoose.connect("mongodb://" + MESSAGES_MONGO_SERVICE_HOST + ":" + MESSAGES_MONGO_SERVICE_PORT + "/messages").then(db => {
-	api.listen(MESSAGES_REST_SERVICE_PORT);	
+MongoClient.connect(CONNECTION_URL).then(database => {
+	console.log("Connected to %s", CONNECTION_URL);
 	
-	api.close();
-	mongoose.disconnect();
+	Logger.setLevel("info");
+	
+	db = database;
+	
+	User = db.collection("users");
+	Conversation = db.collection("conversations");
+	Bucket = db.collection("buckets");
+	
+	User.createIndex({
+		name: 1
+	}, {
+		unique: true
+	});
+	
+	Bucket.createIndex({
+		conversationId: 1,
+		sequence: -1
+	});
+	
+	db.command({ 
+		shardCollection: DATABASE + ".users",
+		unique: true, 
+		key: {
+			name: 1
+		} 
+	});
+	
+	db.command({ 
+		shardCollection: DATABASE + ".conversations",
+		unique: true, 
+		key: {
+			_id: 1
+		} 
+	});
+	
+	db.command({ 
+		shardCollection: DATABASE + ".buckets",
+		unique: true, 
+		key: {
+			conversationId: 1,
+			sequence: -1
+		} 
+	});
+	
+	api.listen(MESSAGES_REST_SERVICE_PORT);
 }, error => {
-	console.log(error);
+	console.error("Error connecting to %s", CONNECTION_URL);
+	console.error(error);
+	
+	process.exit(1);
+}).catch(exception => {
+	console.error(exception);
 	
 	process.exit(1);
 });
@@ -38,25 +86,98 @@ const api = express();
 api.use(json());
 
 api.get("/conversations", (req, res) => {
-	const { participant } = req.query;
+	const { name } = req.query;
 	
-	Conversation.find({
-		$or: [{a: participant}, {b: participant}]
-	}).exec().then(result => {
-		res.send(result);
+	User.findOne({name}).then(user => {
+		
+		if(user) {
+			const { conversations } = user;
+			
+			Conversation.find({
+				_id: {
+					$in: conversations
+				}
+			}).toArray().then(result => {
+				res.send(result);	
+			});
+		} else {
+			res.send([]);
+		}
+	}, error => {
+		res.status(500).send(error);
+	});
+});
+
+api.post("/conversations", (req, res) => {
+	const { participants } = req.body;
+	
+	const conversation = {
+		participants,
+		messageCount: 0
+	};
+	
+	/*
+		1. create a conversation
+		2. find users that do not exist yet
+		3. create those users
+		4. update existing users
+		5. respond with conversation id
+	*/
+	
+	Conversation.insertOne(conversation).then(result => {
+		const { insertedId } = result;
+		
+		User.find({
+			name: {
+				$in: participants
+			}
+		}).toArray().then(results => {
+			const existing = results.map(result => result.name);
+			const nonExisting = difference(participants, existing);
+			
+			const promises = [];
+			
+			if(nonExisting.length > 0)
+				promises.push(User.insertMany(nonExisting.map(name => {
+					return {
+						name,
+						conversations: [insertedId]
+					};
+				})));
+				
+			if(existing.length > 0)
+				promises.push(User.updateMany({
+					name: {
+						$in: existing
+					}
+				}, {
+					$push: {
+						conversations: insertedId
+					}
+				}));
+			
+			Promise.all(promises).then(results => {
+				res.send({id: insertedId, participants});
+			}, results => {
+				res.status(500).send({});
+			});
+			
+		}, error => {
+			res.status(500).send(error);
+		});
 	}, error => {
 		res.status(500).send(error);
 	});
 });
 
 api.get("/buckets", (req, res) => {
-	const { a, b, sequence, limit = 1 } = req.query;
+	const { conversationId, sequence, limit = 1 } = req.query;
 	
 	const parsedSequence = parseInt(sequence);
 	const parsedLimit = parseInt(limit);
 	
 	const andConditions = [{
-		$or: [{a: a, b: b}, {a: b, b: a}]
+		conversationId
 	}];
 	
 	if(sequence)
@@ -69,7 +190,7 @@ api.get("/buckets", (req, res) => {
 		
 	Bucket.find({
 		$and: andConditions
-	}).limit(parsedLimit).sort({sequence: -1}).exec().then(result => {
+	}).limit(parsedLimit).sort({sequence: -1}).toArray().then(result => {
 		res.send(result);
 	}, error => {
 		res.status(500).send(error);
@@ -77,19 +198,18 @@ api.get("/buckets", (req, res) => {
 });
 
 api.post("/messages", (req, res) => {
-	const { from, to, text } = req.body;
+	if(DEBUG)
+		console.log(req.body);
+	
+	const { conversationId, from, to, text } = req.body;
 	
 	const message = {
-		from, to, text
+		_id: new ObjectID(), timestamp: new Date(), from, to, text
 	};
 	
 	Conversation.findOneAndUpdate({
-		$or: [{a: from, b: to}, {a: to, b: from}]
+		_id: ObjectID(conversationId)
 	}, {
-		$setOnInsert: {
-			a: from,
-			b: to	
-		},
 		$inc: {
 			messageCount: 1
 		},
@@ -97,31 +217,32 @@ api.post("/messages", (req, res) => {
 			lastMessage: message
 		}
 	}, {
-		new: true,
-		upsert: true
-	}).exec().then(document => {
-		const { messageCount } = document;
+		new: true
+	}).then(result => {
+		const { value: document } = result;
+		const { messageCount = 0 } = document;
 		
 		Bucket.update({
-			$or: [{a: from, b: to}, {a: to, b: from}],
+			conversationId,
 			sequence: Math.floor(messageCount / BUCKET_SIZE)
 		}, {
-			$setOnInsert: {
-				a: from,
-				b: to	
-			},
 			$push: {
 				messages: message
 			}
 		}, {
+			new: true,
 			upsert: true
-		}).exec().then(result => {
+		}).then(result => {
 			res.send(message);
 		}, error => {
 			res.status(500).send(error);
 		});
 	}, error => {
 		res.status(500).send(error);
+	}).catch(exception => {
+		res.status(500).send({
+			error: exception.message
+		});
 	});
 });
 
@@ -137,7 +258,7 @@ function exitOnSignal(signal) {
 	process.on(signal, function() {
 		console.log("Shutting down.. (%s)", signal);
 		
-		mongoose.disconnect();
+		db.close();
 		
 		process.exit(0);
 	});

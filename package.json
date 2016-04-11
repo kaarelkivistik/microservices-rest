@@ -1,6 +1,6 @@
 {
   "name": "users",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Messages REST microservice",
   "scripts": {
     "build": "babel --out-dir build src",
@@ -20,6 +20,8 @@
     "body-parser": "^1.15.0",
     "express": "^4.13.4",
     "mongodb": "^2.1.7",
-    "mongoose": "^4.4.11"
+    "mongoose": "^4.4.11",
+    "promise": "^7.1.1",
+    "underscore": "^1.8.3"
   }
 }
